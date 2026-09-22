@@ -1,23 +1,27 @@
 {
-  "id": "akwam",
-  "name": "Akwam",
-  "description": "Arabic movie and TV streaming provider",
+  "name": "Nuv-Ara",
   "version": "1.0.0",
-  "author": "vanseleem",
-  "supportedTypes": [
-    "movie",
-    "tv"
-  ],
-  "filename": "providers/akwam.js",
-  "enabled": true,
-  "logo": "",
-  "contentLanguage": [
-    "ar"
-  ],
-  "formats": [
-    "mp4"
-  ],
-  "limited": false,
-  "disabledPlatforms": [],
-  "supportsExternalPlayer": true
+  "scrapers": [
+    {
+      "id": "akwam",
+      "name": "Akwam",
+      "description": "Arabic movie and TV streaming provider",
+      "version": "1.0.0",
+      "author": "vanseleem",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/akwam.js",
+      "enabled": true,
+      "formats": [
+        "mp4"
+      ],
+      "contentLanguage": [
+        "ar"
+      ],
+      "limited": false,
+      "supportsExternalPlayer": true
+    }
+  ]
 }
