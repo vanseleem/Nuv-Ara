@@ -72,42 +72,91 @@ function similarity(a, b) {
 
 function getSearchTitle(tmdbId, mediaType) {
   var type = mediaType === "tv" ? "tv" : "movie";
-  var url =
-    "https://www.themoviedb.org/" +
-    type +
-    "/" +
-    encodeURIComponent(tmdbId);
 
-  return fetchText(url).then(function(html) {
-    if (!html)
-      throw new Error("TMDB page returned empty response");
+  var urls = [
+    "https://www.themoviedb.org/" + type + "/" + encodeURIComponent(tmdbId),
+    "https://www.themoviedb.org/" + type + "/" + encodeURIComponent(tmdbId) + "?language=ar"
+  ];
 
-    var title = null;
-    var m = html.match(
-      /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i
-    );
+  return Promise.all(
+    urls.map(function(url) {
+      return fetchText(url).catch(function() {
+        return "";
+      });
+    })
+  ).then(function(pages) {
+    var titles = [];
+    var years = [];
 
-    if (m)
-      title = decodeHtml(m[1]);
+    pages.forEach(function(html) {
+      if (!html)
+        return;
 
-    if (!title) {
-      m = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-      if (m)
-        title = decodeHtml(m[1]);
-    }
+      var m;
 
-    if (!title)
-      throw new Error("Could not extract TMDB title");
+      m = html.match(
+        /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i
+      );
 
-    title = title
-      .replace(/\s*\|\s*TMDB\s*$/i, "")
-      .replace(/\s*-\s*The Movie Database\s*$/i, "")
-      .trim();
+      if (m) {
+        var title = decodeHtml(m[1])
+          .replace(/\s*\|\s*TMDB\s*$/i, "")
+          .replace(/\s*-\s*The Movie Database\s*$/i, "")
+          .trim();
 
-    console.log("[Akwam] TMDB title:", title);
+        if (title && titles.indexOf(title) === -1)
+          titles.push(title);
+      }
+
+      m = html.match(
+        /<meta[^>]+name=["']twitter:title["'][^>]+content=["']([^"']+)/i
+      );
+
+      if (m) {
+        var twitterTitle = decodeHtml(m[1])
+          .replace(/\s*\|\s*TMDB\s*$/i, "")
+          .trim();
+
+        if (twitterTitle && titles.indexOf(twitterTitle) === -1)
+          titles.push(twitterTitle);
+      }
+
+      m = html.match(
+        /"original_title"\s*:\s*"([^"]+)"/i
+      );
+
+      if (m) {
+        var original = decodeHtml(m[1]);
+
+        if (original && titles.indexOf(original) === -1)
+          titles.push(original);
+      }
+
+      m = html.match(
+        /"release_date"\s*:\s*"([0-9]{4})-[0-9]{2}-[0-9]{2}"/i
+      );
+
+      if (m && years.indexOf(m[1]) === -1)
+        years.push(m[1]);
+
+      m = html.match(
+        /\b(19[0-9]{2}|20[0-9]{2})\b/
+      );
+
+      if (m && years.indexOf(m[1]) === -1)
+        years.push(m[1]);
+    });
+
+    if (!titles.length)
+      throw new Error("Could not extract TMDB titles");
+
+    console.log("[Akwam] TMDB titles:", titles.join(" | "));
+    console.log("[Akwam] TMDB years:", years.join(" | "));
 
     return {
-      title: title
+      titles: titles,
+      year: years.length ? years[0] : null,
+      title: titles[0]
     };
   });
 }
@@ -187,38 +236,141 @@ function searchAkwam(title) {
   return fetchText(url, BASE).then(function(html) {
     var results = extractSearchResults(html);
 
-    console.log("[Akwam] Search results:", results.length);
+    console.log(
+      "[Akwam] Search results for",
+      title + ":",
+      results.length
+    );
 
     return results;
   });
 }
 
-function chooseResult(results, wantedTitle) {
-  if (!results || !results.length)
-    return null;
+function getCandidatePage(url) {
+  return fetchText(url, BASE).then(function(html) {
+    var title = "";
 
-  var best = null;
-  var bestScore = 0;
-
-  results.forEach(function(result) {
-    var score = similarity(result.title, wantedTitle);
-
-    console.log(
-      "[Akwam] Candidate:",
-      result.title,
-      "score:",
-      score.toFixed(3)
+    var m = html.match(
+      /<h1[^>]*class=["'][^"']*entry-title[^"']*["'][^>]*>([\s\S]*?)<\/h1>/i
     );
 
-    if (score > bestScore) {
-      bestScore = score;
-      best = result;
+    if (!m) {
+      m = html.match(
+        /<h1[^>]*>([\s\S]*?)<\/h1>/i
+      );
     }
-  });
 
-  if (best && bestScore >= 0.35) {
+    if (m)
+      title = stripHtml(m[1]);
+
+    var year = null;
+
+    m = html.match(
+      /\b(19[0-9]{2}|20[0-9]{2})\b/
+    );
+
+    if (m)
+      year = m[1];
+
+    return {
+      url: url,
+      title: title,
+      year: year,
+      html: html
+    };
+  });
+}
+
+function chooseResult(results, meta) {
+  if (!results || !results.length)
+    return Promise.resolve(null);
+
+  var candidates = [];
+
+  return Promise.all(
+    results.map(function(result) {
+      return getCandidatePage(result.url)
+        .then(function(page) {
+          candidates.push(page);
+
+          console.log(
+            "[Akwam] Candidate page:",
+            page.title || result.title,
+            "year:",
+            page.year || "?"
+          );
+
+          return page;
+        })
+        .catch(function() {
+          return null;
+        });
+    })
+  ).then(function() {
+    var best = null;
+    var bestScore = 0;
+
+    candidates.forEach(function(candidate) {
+      if (!candidate)
+        return;
+
+      var titleScore = 0;
+
+      meta.titles.forEach(function(tmdbTitle) {
+        var score = similarity(
+          candidate.title,
+          tmdbTitle
+        );
+
+        if (score > titleScore)
+          titleScore = score;
+      });
+
+      var yearScore = 0;
+
+      if (
+        meta.year &&
+        candidate.year &&
+        String(meta.year) === String(candidate.year)
+      ) {
+        yearScore = 0.25;
+      }
+
+      var total = titleScore + yearScore;
+
+      console.log(
+        "[Akwam] Match:",
+        candidate.title,
+        "title:",
+        titleScore.toFixed(3),
+        "year:",
+        yearScore ? "MATCH" : "NO",
+        "total:",
+        total.toFixed(3)
+      );
+
+      if (total > bestScore) {
+        bestScore = total;
+        best = candidate;
+      }
+    });
+
+    /*
+     * Critical safety rule:
+     * never choose an unrelated Akwam result just because
+     * it happened to be returned by the search page.
+     */
+    if (!best || bestScore < 0.80) {
+      console.log(
+        "[Akwam] No safe title match. Best score:",
+        bestScore.toFixed(3)
+      );
+
+      return null;
+    }
+
     console.log(
-      "[Akwam] Selected:",
+      "[Akwam] SAFE SELECT:",
       best.title,
       best.url,
       "score:",
@@ -226,11 +378,7 @@ function chooseResult(results, wantedTitle) {
     );
 
     return best;
-  }
-
-  console.log("[Akwam] No suitable result");
-
-  return null;
+  });
 }
 
 function extractWatchUrls(html) {
@@ -316,44 +464,76 @@ function extractSources(html) {
 function getMovieStreams(tmdbId) {
   return getSearchTitle(tmdbId, "movie")
     .then(function(meta) {
-      return searchAkwam(meta.title)
-        .then(function(results) {
-          var result =
-            chooseResult(results, meta.title);
 
-          if (!result)
-            return [];
+      var searches = meta.titles.slice();
 
-          return fetchText(result.url, BASE)
-            .then(function(html) {
-              var watchUrls =
-                extractWatchUrls(html);
-
-              console.log(
-                "[Akwam] Watch pages:",
-                watchUrls.length
-              );
-
-              return Promise.all(
-                watchUrls.map(function(watchUrl) {
-                  return fetchText(
-                    watchUrl,
-                    result.url
-                  )
-                    .then(function(watchHtml) {
-                      return extractSources(
-                        watchHtml
-                      );
-                    })
-                    .catch(function() {
-                      return [];
-                    });
-                })
-              ).then(function(groups) {
-                return groups.flat();
-              });
+      /*
+       * Search every known TMDB title variant.
+       */
+      return Promise.all(
+        searches.map(function(title) {
+          return searchAkwam(title)
+            .catch(function() {
+              return [];
             });
+        })
+      ).then(function(groups) {
+
+        var all = [];
+        var seen = new Set();
+
+        groups.forEach(function(group) {
+          group.forEach(function(result) {
+            if (!seen.has(result.url)) {
+              seen.add(result.url);
+              all.push(result);
+            }
+          });
         });
+
+        console.log(
+          "[Akwam] Unique candidates:",
+          all.length
+        );
+
+        return chooseResult(all, meta);
+      }).then(function(result) {
+
+        if (!result)
+          return [];
+
+        return Promise.resolve(result.html)
+          .then(function(html) {
+
+            var watchUrls =
+              extractWatchUrls(html);
+
+            console.log(
+              "[Akwam] Watch pages:",
+              watchUrls.length
+            );
+
+            return Promise.all(
+              watchUrls.map(function(watchUrl) {
+                return fetchText(
+                  watchUrl,
+                  result.url
+                )
+                  .then(function(watchHtml) {
+                    return extractSources(
+                      watchHtml
+                    );
+                  })
+                  .catch(function() {
+                    return [];
+                  });
+              })
+            );
+          })
+          .then(function(groups) {
+            return groups.flat();
+          });
+      });
     })
     .catch(function(err) {
       console.error(
