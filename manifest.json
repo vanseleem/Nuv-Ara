@@ -1,23 +1,22 @@
 [
   {
-    "id": "template-provider",
-    "name": "Template Provider",
-    "description": "A starter template for creating Nuvio providers.",
+    "id": "akwam",
+    "name": "Akwam",
+    "description": "Arabic movie and TV streaming provider",
     "version": "1.0.0",
-    "author": "Your Name",
+    "author": "vansubs",
     "supportedTypes": [
       "movie",
       "tv"
     ],
-    "filename": "providers/template.js",
-    "enabled": false,
+    "filename": "providers/akwam.js",
+    "enabled": true,
     "logo": "",
     "contentLanguage": [
-      "en"
+      "ar"
     ],
     "formats": [
-      "mp4",
-      "mkv"
+      "mp4"
     ],
     "limited": false,
     "disabledPlatforms": [],
