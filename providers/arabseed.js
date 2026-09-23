@@ -260,9 +260,10 @@ function searchArabSeed(title, searchType = "movies") {
         );
         results = results.filter((item) => {
           const url2 = item.url.toLowerCase();
+          const decoded = decodeURIComponent(url2);
           if (searchType === "series")
-            return url2.includes("/series/");
-          return !url2.includes("/series/");
+            return decoded.includes("مسلسل") || decoded.includes("برنامج") || url2.includes("/series/");
+          return decoded.includes("فيلم") || (!decoded.includes("مسلسل") && !decoded.includes("برنامج") && !url2.includes("/series/"));
         });
         return results;
       });
