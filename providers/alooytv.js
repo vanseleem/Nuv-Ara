@@ -139,35 +139,14 @@ function extractSources(html) {
   while ((m = sourceRe.exec(html)) !== null) {
     add(m[1]);
   }
-  const downloadRe = /download_video\.php\?[^"'<>]*?\bvideo_url=([^&"'<>]+)/gi;
-  while ((m = downloadRe.exec(html)) !== null) {
-    try {
-      let encoded = decodeURIComponent(m[1]);
-      encoded = encoded.replace(/-/g, "+").replace(/_/g, "/");
-      while (encoded.length % 4) {
-        encoded += "=";
-      }
-      const decoded = Buffer.from(encoded, "base64").toString("utf8");
-      add(decoded);
-    } catch (_) {
-    }
-  }
   const unique = [];
   const seenPaths = /* @__PURE__ */ new Set();
   for (const url of sources) {
-    try {
-      const u = new URL(url);
-      const key = u.pathname;
-      if (seenPaths.has(key)) {
-        continue;
-      }
-      seenPaths.add(key);
-      unique.push(url);
-    } catch (_) {
-      if (!unique.includes(url)) {
-        unique.push(url);
-      }
-    }
+    const key = String(url).split("?")[0].split("#")[0];
+    if (seenPaths.has(key))
+      continue;
+    seenPaths.add(key);
+    unique.push(url);
   }
   return unique;
 }
