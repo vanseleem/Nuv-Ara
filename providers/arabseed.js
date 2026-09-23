@@ -629,8 +629,9 @@ function resolveServer(serverUrl, quality, referer) {
               data.streaming_url
             );
             return [{
+              name: "ArabSeed",
               title: `ArabSeed ${quality}p`,
-              quality: Number(quality) || 0,
+              quality: `${Number(quality) || 0}p`,
               url: data.streaming_url,
               type: "application/x-mpegURL",
               referer: finalUrl
@@ -655,16 +656,18 @@ function resolveServer(serverUrl, quality, referer) {
       );
       if (!sources.length && /\.(mp4|m3u8)(\?|$)/i.test(finalUrl)) {
         return [{
+          name: "ArabSeed",
           title: `ArabSeed ${quality}p`,
-          quality: Number(quality) || 0,
+          quality: `${Number(quality) || 0}p`,
           url: finalUrl,
           type: /\.m3u8/i.test(finalUrl) ? "application/x-mpegURL" : "video/mp4",
           referer
         }];
       }
       return sources.map((source) => ({
+        name: "ArabSeed",
         title: `ArabSeed ${source.label || quality + "p"}`,
-        quality: qualityNumber(source.label) || Number(quality) || 0,
+        quality: `${qualityNumber(source.label) || Number(quality) || 0}p`,
         url: source.url,
         type: source.type,
         referer: finalUrl
@@ -965,7 +968,8 @@ function getTvStreams(tmdbId, season, episode) {
     const candidates = [];
     for (const title of info.titles) {
       const results = yield searchArabSeed(
-        title
+        title,
+        "series"
       );
       candidates.push(
         ...results
