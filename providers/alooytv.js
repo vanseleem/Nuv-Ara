@@ -236,10 +236,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
     if (!Number.isFinite(wantedEpisode) || wantedEpisode < 1) {
       return [];
     }
-    const titles = yield tmdbTitles(tmdbId);
+    let titles = yield tmdbTitles(tmdbId);
     console.log("[AlooyTV] Titles:", titles);
     if (!titles.length) {
-      return [];
+      titles = [String(tmdbId)];
     }
     const watchPages = [];
     for (const title of titles) {
