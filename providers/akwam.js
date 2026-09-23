@@ -3,20 +3,21 @@ var UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gec
 var TMDB_API_KEY = "83d364331c40bfbe29858aeed82f45cc";
 
 function fetchText(url, referer) {
+  url = String(url).replace(/[^\x00-\x7F]/g, function(c) {
+    return encodeURIComponent(c);
+  });
   var headers = {
     "User-Agent": UA,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
   };
-
-  if (referer)
-    headers["Referer"] = referer;
-
+  if (referer) headers["Referer"] = String(referer).replace(/[^\x00-\x7F]/g, function(c) {
+    return encodeURIComponent(c);
+  });
   return fetch(url, {
     headers: headers,
     redirect: "follow"
   }).then(function(r) {
-    if (!r.ok)
-      throw new Error("HTTP " + r.status);
+    if (!r.ok) throw new Error("HTTP " + r.status);
     return r.text();
   });
 }
@@ -488,95 +489,253 @@ function getMovieStreams(tmdbId) {
 function getTvStreams(tmdbId, season, episode) {
   return getSearchTitle(tmdbId, "tv")
     .then(function(meta) {
-      return searchAkwam(meta.title)
-        .then(function(results) {
-          var result =
-            chooseResult(results, meta.title);
 
-          if (!result)
-            return [];
+      console.log(
+        "[Akwam] TV search titles:",
+        meta.titles.join(" | "),
+        "year:",
+        meta.year || "?"
+      );
 
-          return fetchText(result.url, BASE)
-            .then(function(html) {
-              var episodeLinks = [];
-              var seen = new Set();
+      /*
+       * Search all known TMDB title variants.
+       * This is important for Arabic series because
+       * Akwam may index the Arabic title differently.
+       */
+      return Promise.all(
+        meta.titles.map(function(title) {
+          return searchAkwam(title)
+            .catch(function(err) {
+              console.error(
+                "[Akwam] TV search failed:",
+                title,
+                err.message
+              );
+              return [];
+            });
+        })
+      ).then(function(groups) {
 
-              var re =
-                /href=["']([^"']*\/episode\/[^"']+)["']/gi;
+        var results = [];
+        var seen = new Set();
 
-              var m;
+        groups.forEach(function(group) {
+          group.forEach(function(result) {
+            if (!seen.has(result.url)) {
+              seen.add(result.url);
+              results.push(result);
+            }
+          });
+        });
 
-              while ((m = re.exec(html)) !== null) {
-                var url = decodeHtml(m[1]);
+        console.log(
+          "[Akwam] TV unique candidates:",
+          results.length
+        );
 
-                var absolute =
-                  url.startsWith("http")
-                    ? url
-                    : BASE + url;
+        /*
+         * chooseResult() is asynchronous.
+         * It MUST be awaited with .then().
+         */
+        return chooseResult(results, meta);
 
-                if (!seen.has(absolute)) {
-                  seen.add(absolute);
-                  episodeLinks.push(absolute);
-                }
+      }).then(function(result) {
+
+        if (!result) {
+          console.log(
+            "[Akwam] TV: no safe series match"
+          );
+          return [];
+        }
+
+        console.log(
+          "[Akwam] TV selected:",
+          result.title,
+          result.url
+        );
+
+        return fetchText(encodeURI(result.url), BASE)
+          .then(function(html) {
+
+            var episodeLinks = [];
+            var seen = new Set();
+
+            /*
+             * Current Akwam structure:
+             *
+             * /episode/96028/حكاية-نرجس/الحلقة-1
+             *
+             * Do not rely on the Arabic title or episode text.
+             * Extract every /episode/ URL from the series page.
+             */
+            var re =
+              /href=["']([^"']*\/episode\/[^"']+)["']/gi;
+
+            var m;
+
+            while ((m = re.exec(html)) !== null) {
+
+              var url = decodeHtml(m[1]);
+
+              var absolute =
+                url.startsWith("http")
+                  ? url
+                  : BASE + url;
+
+              if (!seen.has(absolute)) {
+                seen.add(absolute);
+                episodeLinks.push(absolute);
               }
+            }
 
-              var wanted =
-                Number(episode);
+            console.log(
+              "[Akwam] TV episode links:",
+              episodeLinks.length
+            );
 
-              var selected =
-                episodeLinks.filter(function(url) {
-                  var match =
-                    url.match(
-                      /episode[^0-9]*([0-9]+)/i
+            var wanted = Number(episode);
+
+            /*
+             * Match the episode number from the final
+             * Arabic/English episode segment.
+             *
+             * Examples:
+             * الحلقة-1
+             * الحلقة-10
+             * الحلقة-15
+             */
+            var selected = episodeLinks.filter(function(url) {
+
+              var match =
+                url.match(
+                  /(?:episode|الحلقة)[^0-9]*([0-9]+)(?:[/?#]|$)/i
+                );
+
+              if (!match)
+                return false;
+
+              return Number(match[1]) === wanted;
+            });
+
+            console.log(
+              "[Akwam] TV requested episode:",
+              wanted,
+              "selected:",
+              selected.length
+            );
+
+            /*
+             * Fallback: Akwam's numeric episode ID is
+             * not the episode number, so never use it
+             * as the episode number.
+             *
+             * If the above Arabic URL pattern changes,
+             * inspect the slug and match the last number.
+             */
+            if (!selected.length) {
+
+              selected = episodeLinks.filter(function(url) {
+
+                var match =
+                  url.match(
+                    /\/episode\/[^\/]+\/[^?#]*?([0-9]+)(?:[/?#]|$)/i
+                  );
+
+                return (
+                  match &&
+                  Number(match[1]) === wanted
+                );
+              });
+            }
+
+            if (!selected.length) {
+              console.log(
+                "[Akwam] TV: requested episode not found:",
+                wanted
+              );
+
+              return [];
+            }
+
+            return Promise.all(
+              selected.map(function(url) {
+
+                console.log(
+                  "[Akwam] TV episode page:",
+                  url
+                );
+
+                return fetchText(
+                  encodeURI(url),
+                  result.url
+                )
+                  .then(function(epHtml) {
+
+                    var watchUrls =
+                      extractWatchUrls(epHtml);
+
+                    console.log(
+                      "[Akwam] TV watch pages:",
+                      watchUrls.length
                     );
 
-                  return (
-                    match &&
-                    Number(match[1]) === wanted
-                  );
-                });
+                    return Promise.all(
+                      watchUrls.map(function(watchUrl) {
 
-              return Promise.all(
-                selected.map(function(url) {
-                  return fetchText(
-                    url,
-                    result.url
-                  )
-                    .then(function(epHtml) {
-                      var watchUrls =
-                        extractWatchUrls(epHtml);
+                        return fetchText(
+                          encodeURI(watchUrl),
+                          url
+                        )
+                          .then(function(watchHtml) {
 
-                      return Promise.all(
-                        watchUrls.map(function(watchUrl) {
-                          return fetchText(
-                            watchUrl,
-                            url
-                          )
-                            .then(function(watchHtml) {
-                              return extractSources(
+                            var sources =
+                              extractSources(
                                 watchHtml
                               );
-                            })
-                            .catch(function() {
-                              return [];
-                            });
-                        })
-                      );
-                    })
-                    .then(function(groups) {
+
+                            console.log(
+                              "[Akwam] TV sources:",
+                              sources.length
+                            );
+
+                            return sources;
+                          })
+                          .catch(function(err) {
+
+                            console.error(
+                              "[Akwam] Watch page failed:",
+                              err.message
+                            );
+
+                            return [];
+                          });
+                      })
+                    ).then(function(groups) {
                       return groups.flat();
-                    })
-                    .catch(function() {
-                      return [];
                     });
-                })
-              ).then(function(groups) {
-                return groups.flat();
-              });
+
+                  })
+                  .catch(function(err) {
+
+                    console.error(
+                      "[Akwam] Episode page failed:",
+                      err.message
+                    );
+
+                    return [];
+                  });
+              })
+            ).then(function(groups) {
+              return groups.flat();
             });
-        });
+
+          });
+
+      });
+
     })
     .catch(function(err) {
+
       console.error(
         "[Akwam] TV error:",
         err.message
