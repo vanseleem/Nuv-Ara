@@ -639,23 +639,26 @@ function resolveServer(serverUrl, quality, referer) {
         finalUrl = BASE + finalUrl;
       }
       console.log("[ArabSeed] Server:", finalUrl);
-      if (/^https?:\/\/vidara\.to\/e\//i.test(finalUrl)) {
+      if (/^https?:\/\/vidaraa?\.(to|cc|so)\/e\//i.test(finalUrl)) {
         const match = finalUrl.match(/\/e\/([^/?#]+)/i);
         if (match) {
           const filecode = match[1];
+          const embedOrigin = finalUrl.match(/^(https?:\/\/[^/]+)/i)[1];
           console.log(
             "[ArabSeed] Vidara filecode:",
-            filecode
+            filecode,
+            "origin:",
+            embedOrigin
           );
           const apiResponse = yield request(
-            "https://vidara.to/api/stream",
+            `${embedOrigin}/api/stream`,
             {
               method: "POST",
               headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+                "User-Agent": UA,
                 "Content-Type": "application/json",
                 "Referer": finalUrl,
-                "Origin": "https://vidara.to"
+                "Origin": embedOrigin
               },
               body: JSON.stringify({
                 filecode,
@@ -691,6 +694,10 @@ function resolveServer(serverUrl, quality, referer) {
           );
           return [];
         }
+      }
+      if (/^https?:\/\/bysezejataos\.com\//i.test(finalUrl)) {
+        console.log("[ArabSeed] Skipping JS-rendered host:", finalUrl);
+        return [];
       }
       const response = yield request(
         finalUrl,
