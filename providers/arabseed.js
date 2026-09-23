@@ -190,163 +190,201 @@ function getTmdbInfo(tmdbId, mediaType) {
   });
 }
 function parseSearchResults(html) {
-  var _a, _b, _c, _d;
   const results = [];
-  const blockRegex = /<a\b[^>]*class=["'][^"']*\bmovie__block\b[^"']*["'][^>]*>[\s\S]*?<\/a>/gi;
+
+  /*
+   * ArabSeed search cards are:
+   *
+   * <a href="..." title="..." class="movie__block">
+   *
+   * Do NOT try to capture the complete <a> element.
+   * The card contains large nested SVG markup and regex-based
+   * closing-tag matching is unreliable.
+   */
+  const cardRegex =
+    /<a\b[^>]*class=["'][^"']*\bmovie__block\b[^"']*["'][^>]*>/gi;
+
   let match;
-  while (match = blockRegex.exec(html)) {
-    const block = match[0];
-    const href = (_a = block.match(
-      /\bhref=["']([^"']+)["']/i
-    )) == null ? void 0 : _a[1];
-    if (!href)
+
+  while ((match = cardRegex.exec(html))) {
+    const tag = match[0];
+
+    const hrefMatch =
+      tag.match(/\bhref=["']([^"']+)["']/i);
+
+    if (!hrefMatch)
       continue;
-    const url = absoluteUrl(href);
-    const title = ((_b = block.match(
-      /\btitle=["']([^"']+)["']/i
-    )) == null ? void 0 : _b[1]) || ((_c = block.match(
-      /<h3[^>]*>([\s\S]*?)<\/h3>/i
-    )) == null ? void 0 : _c[1]);
-    const cleanTitle = stripHtml(title || "");
-    if (!cleanTitle)
+
+    const titleMatch =
+      tag.match(/\btitle=["']([^"']+)["']/i);
+
+    const url = absoluteUrl(hrefMatch[1]);
+
+    if (!url)
       continue;
-    const poster = ((_d = block.match(
-      /<img[^>]+(?:data-src|src)=["']([^"']+)["']/i
-    )) == null ? void 0 : _d[1]) || "";
+
+    /*
+     * The title attribute is the most reliable title source.
+     * Example:
+     * "فيلم Animal Farm 2025 مترجم"
+     */
+    let title = titleMatch
+      ? stripHtml(titleMatch[1])
+      : "";
+
+    /*
+     * If a title attribute is ever missing, inspect the
+     * following part of the card for its <h3>.
+     */
+    if (!title) {
+      const tail =
+        html.substring(
+          match.index,
+          Math.min(
+            html.length,
+            match.index + 4000
+          )
+        );
+
+      const h3 =
+        tail.match(
+          /<h3[^>]*>([\s\S]*?)<\/h3>/i
+        );
+
+      if (h3)
+        title = stripHtml(h3[1]);
+    }
+
+    if (!title)
+      continue;
+
+    let poster = "";
+
+    const afterTag =
+      html.substring(
+        match.index,
+        Math.min(
+          html.length,
+          match.index + 1500
+        )
+      );
+
+    const posterMatch =
+      afterTag.match(
+        /<img[^>]+(?:data-src|src)=["']([^"']+)["']/i
+      );
+
+    if (posterMatch)
+      poster = absoluteUrl(posterMatch[1]);
+
     if (!results.some(
       (x) => x.url === url
     )) {
       results.push({
-        title: cleanTitle,
+        title,
         url,
-        poster: absoluteUrl(poster)
+        poster
       });
     }
   }
-  if (!results.length) {
-    const linkRegex = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-    while (match = linkRegex.exec(html)) {
-      const url = absoluteUrl(match[1]);
-      const title = stripHtml(match[2]);
-      if (!url || !title || !url.startsWith(BASE)) {
-        continue;
-      }
-      if (!results.some(
-        (x) => x.url === url
-      )) {
-        results.push({
-          title,
-          url,
-          poster: ""
-        });
-      }
-    }
-  }
+
   return results;
 }
 function searchArabSeed(title, searchType = "movies") {
   return __async(this, null, function* () {
-    const token = "8fcd30a10a";
     function cleanQuery(value) {
-      return String(value || "").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
+      return String(value || "")
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
     }
+
     function queryVariants(value) {
       const q = cleanQuery(value);
       if (!q)
         return [];
+
       const words = q.split(" ").filter(Boolean);
-      const variants2 = [];
-      variants2.push(q);
+      const variants = [q];
+
       const withoutArticle = q.replace(
         /^(the|a|an)\s+/i,
         ""
       ).trim();
-      if (withoutArticle && withoutArticle.toLowerCase() !== q.toLowerCase()) {
-        variants2.push(withoutArticle);
+
+      if (
+        withoutArticle &&
+        withoutArticle.toLowerCase() !== q.toLowerCase()
+      ) {
+        variants.push(withoutArticle);
       }
+
       if (words.length >= 3) {
         const lastWords = words.slice(-2).join(" ");
-        if (lastWords.length >= 4) {
-          variants2.push(lastWords);
-        }
+        if (lastWords.length >= 4)
+          variants.push(lastWords);
       }
-      const distinctive = words.filter((w) => w.length >= 5).sort((a, b) => b.length - a.length)[0];
-      if (distinctive) {
-        variants2.push(distinctive);
-      }
-      if (/^the\s+/i.test(q)) {
-        variants2.push("The");
-      }
-      return [...new Set(variants2)];
+
+      const distinctive = words
+        .filter((w) => w.length >= 5)
+        .sort((a, b) => b.length - a.length)[0];
+
+      if (distinctive)
+        variants.push(distinctive);
+
+      if (/^the\s+/i.test(q))
+        variants.push("The");
+
+      return [...new Set(variants)];
     }
+
     function doSearch(query) {
       return __async(this, null, function* () {
-        const body = new URLSearchParams({
-          search: query,
-          search_type: searchType,
-          csrf_token: token
-        });
-        const response = yield fetch(
-          `${BASE}/find__posts/`,
-          {
-            method: "POST",
-            headers: {
-              "User-Agent": UA,
-              "Accept": "application/json,text/plain,*/*",
-              "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-              "X-Requested-With": "XMLHttpRequest",
-              "Referer": `${BASE}/`
-            },
-            body: body.toString()
-          }
+        const url =
+          `${BASE}/?s=${encodeURIComponent(query)}`;
+
+        console.log(
+          `[ArabSeed] Search: ${url}`
         );
-        if (!response.ok) {
-          throw new Error(
-            `ArabSeed search HTTP ${response.status}`
-          );
-        }
-        const json = JSON.parse(yield response.text());
-        const html = json.html || "";
-        const results = [];
-        const re = /<a\s+href=["']([^"']+)["']\s+class=["'][^"']*\bsearch__item\b[^"']*["']>([\s\S]*?)<\/a>/gi;
-        let match;
-        while (match = re.exec(html)) {
-          const block = match[2];
-          const titleMatch = block.match(
-            /<h3[^>]*>([\s\S]*?)<\/h3>/i
-          );
-          if (!titleMatch)
-            continue;
-          const resultTitle = stripHtml(titleMatch[1]);
-          const url = absoluteUrl(match[1]);
-          if (!resultTitle || !url.startsWith(BASE)) {
-            continue;
+
+        const response = yield request(url, {
+          headers: {
+            "Referer": `${BASE}/`
           }
-          const imgMatch = block.match(
-            /<img[^>]+(?:data-src|src)=["']([^"']+)["']/i
-          );
-          const result = {
-            title: resultTitle,
-            url,
-            poster: imgMatch ? absoluteUrl(imgMatch[1]) : ""
-          };
-          if (!results.some(
-            (x) => x.url === result.url
-          )) {
-            results.push(result);
-          }
-        }
+        });
+
+        let results = parseSearchResults(
+          response.text
+        );
+
+        /*
+         * ArabSeed's normal search page can contain both
+         * movies and series. Keep only the requested type.
+         */
+        results = results.filter((item) => {
+          const url = item.url.toLowerCase();
+
+          if (searchType === "series")
+            return url.includes("/series/");
+
+          return !url.includes("/series/");
+        });
+
         return results;
       });
     }
+
     const variants = queryVariants(title);
     const allResults = [];
+
     for (const query of variants) {
       try {
         const results = yield doSearch(query);
+
         console.log(
-          `[ArabSeed] AJAX search "${query}" [${searchType}]: ${results.length} results`
+          `[ArabSeed] GET search "${query}" [${searchType}]: ${results.length} results`
         );
+
         for (const result of results) {
           if (!allResults.some(
             (x) => x.url === result.url
@@ -354,7 +392,16 @@ function searchArabSeed(title, searchType = "movies") {
             allResults.push(result);
           }
         }
-        if (query.toLowerCase() === cleanQuery(title).toLowerCase() && results.length > 0) {
+
+        /*
+         * Exact query already returned something.
+         * No need to search weaker variants.
+         */
+        if (
+          query.toLowerCase() ===
+            cleanQuery(title).toLowerCase() &&
+          results.length > 0
+        ) {
           break;
         }
       } catch (error) {
@@ -364,9 +411,11 @@ function searchArabSeed(title, searchType = "movies") {
         );
       }
     }
+
     console.log(
       `[ArabSeed] Combined unique results: ${allResults.length}`
     );
+
     return allResults;
   });
 }
