@@ -474,12 +474,25 @@ function chooseCandidate(candidates, wantedTitles, wantedYears) {
       );
     }
     let yearBonus = 0;
-    if (candidate.year && wantedYears.includes(candidate.year)) {
-      yearBonus = 0.12;
+    let yearPenalty = 0;
+    if (candidate.year && wantedYears.length) {
+      if (wantedYears.includes(candidate.year)) {
+        yearBonus = 0.12;
+      } else {
+        const closest = wantedYears.reduce((best, y) => {
+          const diff = Math.abs(y - candidate.year);
+          return diff < best ? diff : best;
+        }, Infinity);
+        if (closest >= 3) {
+          yearPenalty = 0.5;
+        } else if (closest >= 1) {
+          yearPenalty = 0.15 * closest;
+        }
+      }
     }
-    const total = Math.min(
-      1,
-      titleScore + yearBonus
+    const total = Math.max(
+      0,
+      Math.min(1, titleScore + yearBonus - yearPenalty)
     );
     console.log(
       "[ArabSeed] Candidate:",
