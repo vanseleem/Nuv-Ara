@@ -1,5 +1,6 @@
 var BASE = "https://akwam.ss";
 var UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36";
+var TMDB_API_KEY = "83d364331c40bfbe29858aeed82f45cc";
 
 function fetchText(url, referer) {
   var headers = {
@@ -72,94 +73,32 @@ function similarity(a, b) {
 
 function getSearchTitle(tmdbId, mediaType) {
   var type = mediaType === "tv" ? "tv" : "movie";
+  var langs = ["ar", "en"];
+  var titles = [];
+  var year = null;
 
-  var urls = [
-    "https://www.themoviedb.org/" + type + "/" + encodeURIComponent(tmdbId),
-    "https://www.themoviedb.org/" + type + "/" + encodeURIComponent(tmdbId) + "?language=ar"
-  ];
-
-  return Promise.all(
-    urls.map(function(url) {
-      return fetchText(url).catch(function() {
-        return "";
-      });
-    })
-  ).then(function(pages) {
-    var titles = [];
-    var years = [];
-
-    pages.forEach(function(html) {
-      if (!html)
-        return;
-
-      var m;
-
-      m = html.match(
-        /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i
-      );
-
-      if (m) {
-        var title = decodeHtml(m[1])
-          .replace(/\s*\|\s*TMDB\s*$/i, "")
-          .replace(/\s*-\s*The Movie Database\s*$/i, "")
-          .trim();
-
-        if (title && titles.indexOf(title) === -1)
-          titles.push(title);
-      }
-
-      m = html.match(
-        /<meta[^>]+name=["']twitter:title["'][^>]+content=["']([^"']+)/i
-      );
-
-      if (m) {
-        var twitterTitle = decodeHtml(m[1])
-          .replace(/\s*\|\s*TMDB\s*$/i, "")
-          .trim();
-
-        if (twitterTitle && titles.indexOf(twitterTitle) === -1)
-          titles.push(twitterTitle);
-      }
-
-      m = html.match(
-        /"original_title"\s*:\s*"([^"]+)"/i
-      );
-
-      if (m) {
-        var original = decodeHtml(m[1]);
-
-        if (original && titles.indexOf(original) === -1)
-          titles.push(original);
-      }
-
-      m = html.match(
-        /"release_date"\s*:\s*"([0-9]{4})-[0-9]{2}-[0-9]{2}"/i
-      );
-
-      if (m && years.indexOf(m[1]) === -1)
-        years.push(m[1]);
-
-      m = html.match(
-        /\b(19[0-9]{2}|20[0-9]{2})\b/
-      );
-
-      if (m && years.indexOf(m[1]) === -1)
-        years.push(m[1]);
+  return langs.reduce(function(chain, lang) {
+    return chain.then(function() {
+      var apiUrl = "https://api.themoviedb.org/3/" + type + "/" + encodeURIComponent(tmdbId) + "?api_key=" + TMDB_API_KEY + "&language=" + lang;
+      return fetchText(apiUrl).then(function(text) {
+        try {
+          var data = JSON.parse(text);
+          var title = type === "movie" ? (data.title || data.original_title) : (data.name || data.original_name);
+          if (title && titles.indexOf(title) === -1) titles.push(title);
+          if (!year) {
+            var dateStr = type === "movie" ? data.release_date : data.first_air_date;
+            if (dateStr) year = dateStr.slice(0, 4);
+          }
+        } catch (e) {}
+      }).catch(function() {});
     });
-
-    if (!titles.length)
-      throw new Error("Could not extract TMDB titles");
-
+  }, Promise.resolve()).then(function() {
+    if (!titles.length) throw new Error("Could not get TMDB titles for " + tmdbId);
     console.log("[Akwam] TMDB titles:", titles.join(" | "));
-    console.log("[Akwam] TMDB years:", years.join(" | "));
-
-    return {
-      titles: titles,
-      year: years.length ? years[0] : null,
-      title: titles[0]
-    };
+    return { titles: titles, year: year, title: titles[0] };
   });
 }
+
 
 function extractSearchResults(html) {
   var results = [];

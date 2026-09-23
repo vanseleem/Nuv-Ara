@@ -40,6 +40,7 @@ var __async = (__this, __arguments, generator) => {
 };
 const BASE = "https://arabseed.store";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
+const TMDB_API_KEY = "83d364331c40bfbe29858aeed82f45cc";
 function request(_0) {
   return __async(this, arguments, function* (url, options = {}) {
     const headers = __spreadValues({
@@ -86,7 +87,6 @@ function normalizeTitle(value = "") {
 function stripYearToken(value = "") {
   return String(value).replace(/\b(19|20)\d{2}\b/g, "").replace(/\s+/g, " ").trim();
 }
-
 function titleSimilarity(a, b) {
   const aa = normalizeTitle(stripYearToken(a));
   const bb = normalizeTitle(stripYearToken(b));
@@ -133,154 +133,75 @@ function extractAttribute(tag, name) {
 }
 function getTmdbInfo(tmdbId, mediaType) {
   return __async(this, null, function* () {
-    var _a, _b, _c, _d, _e, _f;
     const type = mediaType === "tv" ? "tv" : "movie";
-    const urls = [
-      `https://www.themoviedb.org/${type}/${encodeURIComponent(tmdbId)}`,
-      `https://www.themoviedb.org/${type}/${encodeURIComponent(tmdbId)}?language=ar`
-    ];
     const titles = [];
     const years = [];
-    for (const url of urls) {
+    const langs = ["ar", "en"];
+    for (const lang of langs) {
       try {
-        const html = yield getText(url);
-        const candidates = [
-          (_a = html.match(
-            /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i
-          )) == null ? void 0 : _a[1],
-          (_b = html.match(
-            /<meta[^>]+name=["']twitter:title["'][^>]+content=["']([^"']+)/i
-          )) == null ? void 0 : _b[1],
-          (_c = html.match(
-            /"original_title"\s*:\s*"([^"]+)"/i
-          )) == null ? void 0 : _c[1],
-          (_d = html.match(
-            /"original_name"\s*:\s*"([^"]+)"/i
-          )) == null ? void 0 : _d[1],
-          (_e = html.match(
-            /"title"\s*:\s*"([^"]+)"/i
-          )) == null ? void 0 : _e[1],
-          (_f = html.match(
-            /"name"\s*:\s*"([^"]+)"/i
-          )) == null ? void 0 : _f[1]
-        ];
-        for (const value of candidates) {
-          if (!value)
-            continue;
-          const clean = stripHtml(value).replace(/\s*\|\s*TMDB.*$/i, "").trim();
-          if (clean && !titles.some(
-            (x) => normalizeTitle(x) === normalizeTitle(clean)
-          )) {
-            titles.push(clean);
-          }
+        const apiUrl = "https://api.themoviedb.org/3/" + type + "/" + encodeURIComponent(tmdbId) + "?api_key=" + TMDB_API_KEY + "&language=" + lang;
+        const text = yield getText(apiUrl);
+        const data = JSON.parse(text);
+        const title = type === "movie" ? data.title || data.original_title : data.name || data.original_name;
+        if (title && !titles.some((x) => normalizeTitle(x) === normalizeTitle(title))) {
+          titles.push(title);
         }
-        const yearMatches = html.match(/\b(19|20)\d{2}\b/g) || [];
-        for (const value of yearMatches) {
-          const year = Number(value);
-          if (year >= 1900 && year <= 2100 && !years.includes(year)) {
+        const dateStr = type === "movie" ? data.release_date : data.first_air_date;
+        if (dateStr) {
+          const year = Number(dateStr.slice(0, 4));
+          if (year && !years.includes(year))
             years.push(year);
-          }
         }
       } catch (e) {
-        console.log(
-          `[ArabSeed] TMDB request failed: ${url}`
-        );
+        console.log("[ArabSeed] TMDB API failed for lang " + lang + ": " + e.message);
       }
     }
-    return {
-      titles,
-      years
-    };
+    return { titles, years };
   });
 }
 function parseSearchResults(html) {
   const results = [];
-
-  /*
-   * ArabSeed search cards are:
-   *
-   * <a href="..." title="..." class="movie__block">
-   *
-   * Do NOT try to capture the complete <a> element.
-   * The card contains large nested SVG markup and regex-based
-   * closing-tag matching is unreliable.
-   */
-  const cardRegex =
-    /<a\b[^>]*class=["'][^"']*\bmovie__block\b[^"']*["'][^>]*>/gi;
-
+  const cardRegex = /<a\b[^>]*class=["'][^"']*\bmovie__block\b[^"']*["'][^>]*>/gi;
   let match;
-
-  while ((match = cardRegex.exec(html))) {
+  while (match = cardRegex.exec(html)) {
     const tag = match[0];
-
-    const hrefMatch =
-      tag.match(/\bhref=["']([^"']+)["']/i);
-
+    const hrefMatch = tag.match(/\bhref=["']([^"']+)["']/i);
     if (!hrefMatch)
       continue;
-
-    const titleMatch =
-      tag.match(/\btitle=["']([^"']+)["']/i);
-
+    const titleMatch = tag.match(/\btitle=["']([^"']+)["']/i);
     const url = absoluteUrl(hrefMatch[1]);
-
     if (!url)
       continue;
-
-    /*
-     * The title attribute is the most reliable title source.
-     * Example:
-     * "فيلم Animal Farm 2025 مترجم"
-     */
-    let title = titleMatch
-      ? stripHtml(titleMatch[1])
-      : "";
-
-    /*
-     * If a title attribute is ever missing, inspect the
-     * following part of the card for its <h3>.
-     */
+    let title = titleMatch ? stripHtml(titleMatch[1]) : "";
     if (!title) {
-      const tail =
-        html.substring(
-          match.index,
-          Math.min(
-            html.length,
-            match.index + 4000
-          )
-        );
-
-      const h3 =
-        tail.match(
-          /<h3[^>]*>([\s\S]*?)<\/h3>/i
-        );
-
-      if (h3)
-        title = stripHtml(h3[1]);
-    }
-
-    if (!title)
-      continue;
-
-    let poster = "";
-
-    const afterTag =
-      html.substring(
+      const tail = html.substring(
         match.index,
         Math.min(
           html.length,
-          match.index + 1500
+          match.index + 4e3
         )
       );
-
-    const posterMatch =
-      afterTag.match(
-        /<img[^>]+(?:data-src|src)=["']([^"']+)["']/i
+      const h3 = tail.match(
+        /<h3[^>]*>([\s\S]*?)<\/h3>/i
       );
-
+      if (h3)
+        title = stripHtml(h3[1]);
+    }
+    if (!title)
+      continue;
+    let poster = "";
+    const afterTag = html.substring(
+      match.index,
+      Math.min(
+        html.length,
+        match.index + 1500
+      )
+    );
+    const posterMatch = afterTag.match(
+      /<img[^>]+(?:data-src|src)=["']([^"']+)["']/i
+    );
     if (posterMatch)
       poster = absoluteUrl(posterMatch[1]);
-
     if (!results.some(
       (x) => x.url === url
     )) {
@@ -291,104 +212,69 @@ function parseSearchResults(html) {
       });
     }
   }
-
   return results;
 }
 function searchArabSeed(title, searchType = "movies") {
   return __async(this, null, function* () {
     function cleanQuery(value) {
-      return String(value || "")
-        .replace(/[^\p{L}\p{N}]+/gu, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+      return String(value || "").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
     }
-
     function queryVariants(value) {
       const q = cleanQuery(value);
       if (!q)
         return [];
-
       const words = q.split(" ").filter(Boolean);
-      const variants = [q];
-
+      const variants2 = [q];
       const withoutArticle = q.replace(
         /^(the|a|an)\s+/i,
         ""
       ).trim();
-
-      if (
-        withoutArticle &&
-        withoutArticle.toLowerCase() !== q.toLowerCase()
-      ) {
-        variants.push(withoutArticle);
+      if (withoutArticle && withoutArticle.toLowerCase() !== q.toLowerCase()) {
+        variants2.push(withoutArticle);
       }
-
       if (words.length >= 3) {
         const lastWords = words.slice(-2).join(" ");
         if (lastWords.length >= 4)
-          variants.push(lastWords);
+          variants2.push(lastWords);
       }
-
-      const distinctive = words
-        .filter((w) => w.length >= 5)
-        .sort((a, b) => b.length - a.length)[0];
-
+      const distinctive = words.filter((w) => w.length >= 5).sort((a, b) => b.length - a.length)[0];
       if (distinctive)
-        variants.push(distinctive);
-
+        variants2.push(distinctive);
       if (/^the\s+/i.test(q))
-        variants.push("The");
-
-      return [...new Set(variants)];
+        variants2.push("The");
+      return [...new Set(variants2)];
     }
-
     function doSearch(query) {
       return __async(this, null, function* () {
-        const url =
-          `${BASE}/?s=${encodeURIComponent(query)}`;
-
+        const url = `${BASE}/?s=${encodeURIComponent(query)}`;
         console.log(
           `[ArabSeed] Search: ${url}`
         );
-
         const response = yield request(url, {
           headers: {
             "Referer": `${BASE}/`
           }
         });
-
         let results = parseSearchResults(
           response.text
         );
-
-        /*
-         * ArabSeed's normal search page can contain both
-         * movies and series. Keep only the requested type.
-         */
         results = results.filter((item) => {
-          const url = item.url.toLowerCase();
-
+          const url2 = item.url.toLowerCase();
           if (searchType === "series")
-            return url.includes("/series/");
-
-          return !url.includes("/series/");
+            return url2.includes("/series/");
+          return !url2.includes("/series/");
         });
-
         return results;
       });
     }
-
     const variants = queryVariants(title);
     const allResults = [];
-
     for (const query of variants) {
       try {
         const results = yield doSearch(query);
-
         console.log(
           `[ArabSeed] GET search "${query}" [${searchType}]: ${results.length} results`
         );
-
         for (const result of results) {
           if (!allResults.some(
             (x) => x.url === result.url
@@ -396,16 +282,7 @@ function searchArabSeed(title, searchType = "movies") {
             allResults.push(result);
           }
         }
-
-        /*
-         * Exact query already returned something.
-         * No need to search weaker variants.
-         */
-        if (
-          query.toLowerCase() ===
-            cleanQuery(title).toLowerCase() &&
-          results.length > 0
-        ) {
+        if (query.toLowerCase() === cleanQuery(title).toLowerCase() && results.length > 0) {
           break;
         }
       } catch (error) {
@@ -415,11 +292,9 @@ function searchArabSeed(title, searchType = "movies") {
         );
       }
     }
-
     console.log(
       `[ArabSeed] Combined unique results: ${allResults.length}`
     );
-
     return allResults;
   });
 }
@@ -479,9 +354,9 @@ function chooseCandidate(candidates, wantedTitles, wantedYears) {
       if (wantedYears.includes(candidate.year)) {
         yearBonus = 0.12;
       } else {
-        const closest = wantedYears.reduce((best, y) => {
+        const closest = wantedYears.reduce((best2, y) => {
           const diff = Math.abs(y - candidate.year);
-          return diff < best ? diff : best;
+          return diff < best2 ? diff : best2;
         }, Infinity);
         if (closest >= 3) {
           yearPenalty = 0.5;
@@ -759,15 +634,16 @@ function getStreamsFromPage(pageUrl) {
   return __async(this, null, function* () {
     var _a;
     const pageResponse = yield request(pageUrl);
-    const watchUrl = extractWatchUrl(
-      pageResponse.text
-    );
-    if (!watchUrl) {
-      throw new Error(
-        "ArabSeed watch button not found"
-      );
+    let absoluteWatchUrl;
+    if (/\/watch\/?$/i.test(pageUrl)) {
+      absoluteWatchUrl = pageUrl;
+    } else {
+      const watchUrl = extractWatchUrl(pageResponse.text);
+      if (!watchUrl) {
+        throw new Error("ArabSeed watch button not found");
+      }
+      absoluteWatchUrl = absoluteUrl(watchUrl);
     }
-    const absoluteWatchUrl = absoluteUrl(watchUrl);
     console.log(
       "[ArabSeed] Watch URL:",
       absoluteWatchUrl
@@ -931,87 +807,37 @@ function getSeriesEpisodes(pageUrl) {
       /<[^>]+class=["'][^"']*\bepisodes__list\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i
     )) == null ? void 0 : _a[1]) || "";
     function parseEpisodes(episodeHtml, seasonNumber) {
-      const regex = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-      let e;
-      while (e = regex.exec(episodeHtml)) {
-        const href = absoluteUrl(e[1]);
-        const text = stripHtml(e[2]);
-        if (!href || !text) {
+      const hrefRe = /href=["']([^"']+)["']/gi;
+      let m;
+      while (m = hrefRe.exec(episodeHtml)) {
+        const href = absoluteUrl(m[1]);
+        if (!href)
           continue;
+        let decoded;
+        try {
+          decoded = decodeURIComponent(href);
+        } catch (_) {
+          decoded = href;
         }
-        const isEpisode = text.includes("\u0627\u0644\u062D\u0644\u0642\u0629") || decodeURIComponent(
-          href
-        ).includes("\u0627\u0644\u062D\u0644\u0642\u0629");
-        if (!isEpisode) {
+        if (!decoded.includes("\u0627\u0644\u062D\u0644\u0642\u0629"))
           continue;
-        }
-        const numberMatch = text.match(
-          /\b(\d+)\b/
-        );
-        const episodeNumber = Number(
-          numberMatch == null ? void 0 : numberMatch[1]
-        ) || 0;
-        if (!episodeNumber) {
+        const numMatch = decoded.match(/\u0627\u0644\u062D\u0644\u0642\u0629[^\d]*(\d+)/);
+        const episodeNumber = numMatch ? Number(numMatch[1]) : 0;
+        if (!episodeNumber)
           continue;
-        }
+        if (episodes.some(function(e) {
+          return e.url === href;
+        }))
+          continue;
         episodes.push({
           url: href,
           season: seasonNumber,
           episode: episodeNumber,
-          name: text
+          name: "Episode " + episodeNumber
         });
       }
     }
-    if (!seasonMatches.length) {
-      parseEpisodes(
-        defaultEpisodes || html,
-        1
-      );
-    } else {
-      for (let index = 0; index < seasonMatches.length; index++) {
-        const season = seasonMatches[index];
-        const seasonNumber = index + 1;
-        let episodeHtml = "";
-        if (index === 0 && defaultEpisodes) {
-          episodeHtml = defaultEpisodes;
-        } else if (season.seriesId && token) {
-          try {
-            const endpoint = `${BASE}/season__episodes/`;
-            const body = `series_id=${encodeURIComponent(season.seriesId)}&season_id=${encodeURIComponent(season.seasonId)}&csrf_token=${encodeURIComponent(token)}`;
-            const result = yield request(
-              endpoint,
-              {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                  "Referer": pageUrl,
-                  "X-Requested-With": "XMLHttpRequest"
-                },
-                body
-              }
-            );
-            try {
-              const json = JSON.parse(result.text);
-              episodeHtml = json.html || "";
-            } catch (e) {
-              episodeHtml = result.text;
-            }
-          } catch (error) {
-            console.log(
-              "[ArabSeed] Season request failed:",
-              seasonNumber,
-              error.message
-            );
-          }
-        }
-        if (episodeHtml) {
-          parseEpisodes(
-            episodeHtml,
-            seasonNumber
-          );
-        }
-      }
-    }
+    parseEpisodes(html, 1);
     const unique = [];
     const seen = /* @__PURE__ */ new Set();
     for (const episode of episodes) {
