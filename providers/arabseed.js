@@ -246,7 +246,7 @@ function searchArabSeed(title, searchType = "movies") {
     }
     function doSearch(query) {
       return __async(this, null, function* () {
-        const url = `${BASE}/?s=${encodeURIComponent(query)}`;
+        const url = `${BASE}/?s=${encodeURIComponent(query)}${searchType === "series" ? "&type=series" : "&type=movies"}`;
         console.log(
           `[ArabSeed] Search: ${url}`
         );
