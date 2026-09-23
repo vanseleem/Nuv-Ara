@@ -165,10 +165,11 @@ function extractSearchResults(html) {
 }
 
 function searchAkwam(title) {
+  var cleanTitle = String(title || "").replace(/[:\u060C-\u061F]/g, " ").replace(/\s+/g, " ").trim();
   var url =
     BASE +
     "/search?q=" +
-    encodeURIComponent(title);
+    encodeURIComponent(cleanTitle);
 
   console.log("[Akwam] Search:", url);
 

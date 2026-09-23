@@ -837,7 +837,9 @@ function getSeriesEpisodes(pageUrl) {
         });
       }
     }
-    parseEpisodes(html, 1);
+    const epSection = html.indexOf("episodes__list");
+    const epHtml = epSection !== -1 ? html.substring(epSection, html.indexOf("</section>", epSection)) : html;
+    parseEpisodes(epHtml, 1);
     const unique = [];
     const seen = /* @__PURE__ */ new Set();
     for (const episode of episodes) {
