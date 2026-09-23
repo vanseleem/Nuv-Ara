@@ -83,9 +83,13 @@ function stripHtml(value = "") {
 function normalizeTitle(value = "") {
   return decodeHtml(value).toLowerCase().replace(/[\u064B-\u065F\u0670]/g, "").replace(/[إأآا]/g, "\u0627").replace(/ى/g, "\u064A").replace(/ة/g, "\u0647").replace(/[ـ]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
 }
+function stripYearToken(value = "") {
+  return String(value).replace(/\b(19|20)\d{2}\b/g, "").replace(/\s+/g, " ").trim();
+}
+
 function titleSimilarity(a, b) {
-  const aa = normalizeTitle(a);
-  const bb = normalizeTitle(b);
+  const aa = normalizeTitle(stripYearToken(a));
+  const bb = normalizeTitle(stripYearToken(b));
   if (!aa || !bb)
     return 0;
   if (aa === bb)
