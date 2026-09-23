@@ -21,6 +21,7 @@ var __async = (__this, __arguments, generator) => {
 };
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
 const DOMAIN = "https://dm.alooytv16.xyz";
+const TMDB_API_KEY = "83d364331c40bfbe29858aeed82f45cc";
 function decodeHtml(str) {
   return String(str).replace(/&amp;/gi, "&").replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/&#x27;/gi, "'").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">");
 }
@@ -178,30 +179,21 @@ function makeStream(url, episode) {
     }
   };
 }
-function tmdbTitles(tmdbId) {
+function tmdbTitles(tmdbId, mediaType) {
   return __async(this, null, function* () {
-    const urls = [
-      `https://www.themoviedb.org/tv/${encodeURIComponent(tmdbId)}?language=ar`,
-      `https://www.themoviedb.org/tv/${encodeURIComponent(tmdbId)}?language=en`
-    ];
+    const type = mediaType === "movie" ? "movie" : "tv";
     const titles = [];
-    for (const url of urls) {
+    const langs = ["ar", "en"];
+    for (const lang of langs) {
       try {
-        const html = yield get(url);
-        const patterns = [
-          /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i,
-          /<title[^>]*>([\s\S]*?)<\/title>/i
-        ];
-        for (const re of patterns) {
-          const m = html.match(re);
-          if (!m)
-            continue;
-          let title = clean(m[1]);
-          title = title.replace(/\s*\(TV Series[^)]*\).*$/i, "").replace(/\s*—\s*The Movie Database.*$/i, "").trim();
-          if (title && !titles.includes(title)) {
-            titles.push(title);
-          }
-        }
+        const apiUrl = "https://api.themoviedb.org/3/" + type + "/" + encodeURIComponent(tmdbId) + "?api_key=" + TMDB_API_KEY + "&language=" + lang;
+        const res = yield fetch(apiUrl);
+        if (!res.ok)
+          continue;
+        const data = yield res.json();
+        const title = type === "movie" ? data.title || data.original_title : data.name || data.original_name;
+        if (title && !titles.includes(title))
+          titles.push(title);
       } catch (_) {
       }
     }
@@ -236,7 +228,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
     if (!Number.isFinite(wantedEpisode) || wantedEpisode < 1) {
       return [];
     }
-    let titles = yield tmdbTitles(tmdbId);
+    let titles = yield tmdbTitles(tmdbId, mediaType);
     console.log("[AlooyTV] Titles:", titles);
     if (!titles.length) {
       titles = [String(tmdbId)];
