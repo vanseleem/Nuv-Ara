@@ -1,6 +1,6 @@
 {
   "name": "Nuv-Ara",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "scrapers": [
     {
       "id": "akwam",
@@ -65,6 +65,50 @@
       ],
       "limited": false,
       "supportsExternalPlayer": true
+    },
+    {
+      "id": "moviztime",
+      "name": "MovizTime",
+      "description": "Foreign movies with Arabic subtitles",
+      "version": "1.0.0",
+      "author": "vanseleem",
+      "supportedTypes": [
+        "movie"
+      ],
+      "filename": "providers/moviztime.js",
+      "enabled": true,
+      "formats": [
+        "m3u8"
+      ],
+      "contentLanguage": [
+        "ar",
+        "en"
+      ],
+      "limited": false,
+      "supportsExternalPlayer": true
+    },
+    {
+      "id": "vixsrc",
+      "name": "VixSrc",
+      "description": "45K+ movies and 15K+ shows via embed player",
+      "version": "1.0.0",
+      "author": "vanseleem",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/vixsrc.js",
+      "enabled": true,
+      "formats": [
+        "iframe"
+      ],
+      "contentLanguage": [
+        "en",
+        "ar",
+        "multi"
+      ],
+      "limited": false,
+      "supportsExternalPlayer": false
     }
   ]
 }
