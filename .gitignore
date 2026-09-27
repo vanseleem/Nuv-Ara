@@ -6,7 +6,20 @@ npm-debug.log*
 tmp/
 .tmp/
 
-# local backups of patched providers
+# local backups of providers and misc dev artifacts
 providers/*.bak
 providers/*.bak[0-9]*
-providers/*.bak[0-9]*
+providers/*.backup.js
+providers/*.before-*.js
+providers/*.pre-fix.js
+providers/*.verified.js
+providers/*.working.js
+providers/*.before-search-*.js
+*.before-*.js
+manifest.before-*.js
+test-*.js
+
+# but DO keep the real providers
+!providers/arabseed.js
+!providers/akwam.js
+!providers/alooytv.js
