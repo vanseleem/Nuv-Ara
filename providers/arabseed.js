@@ -38,7 +38,7 @@ var __async = (__this, __arguments, generator) => {
     step((generator = generator.apply(__this, __arguments)).next());
   });
 };
-const BASE = "https://arabseed.store";
+const BASE = "https://arabseed.wine";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
 const TMDB_API_KEY = "83d364331c40bfbe29858aeed82f45cc";
 function request(_0) {
