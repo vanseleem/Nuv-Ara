@@ -1,30 +1,3 @@
-// ===== ArabSeed browser-header shim (auto-injected) =====
-const _ASD_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
-const _ASD_HDRS = {
-  "User-Agent": _ASD_UA,
-  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-  "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
-  "Referer": "https://arabseed.rent/",
-  "Upgrade-Insecure-Requests": "1",
-};
-
-// Patch axios if the provider uses it
-try {
-  const _ax = require("axios");
-  Object.assign(_ax.defaults.headers.common, _ASD_HDRS);
-} catch (e) {}
-
-// Patch global fetch if the provider uses it
-if (typeof globalThis.fetch === "function" && !globalThis.__asdPatched) {
-  const _origFetch = globalThis.fetch;
-  globalThis.fetch = (u, o = {}) => _origFetch(u, {
-    ...o,
-    headers: { ..._ASD_HDRS, ...(o.headers || {}) },
-  });
-  globalThis.__asdPatched = true;
-}
-// ===== end shim =====
-
 "use strict";
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -65,7 +38,7 @@ var __async = (__this, __arguments, generator) => {
     step((generator = generator.apply(__this, __arguments)).next());
   });
 };
-const BASE = "https://arabseed.rent";
+const BASE = "https://arabseed.store";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
 const TMDB_API_KEY = "83d364331c40bfbe29858aeed82f45cc";
 function request(_0) {
@@ -273,7 +246,7 @@ function searchArabSeed(title, searchType = "movies") {
     }
     function doSearch(query) {
       return __async(this, null, function* () {
-        const url = `${BASE}/?s=${encodeURIComponent(query)}${searchType === "movies" ? "&type=movies" : ""}`;
+        const url = `${BASE}/?s=${encodeURIComponent(query)}`;
         console.log(
           `[ArabSeed] Search: ${url}`
         );
@@ -287,10 +260,9 @@ function searchArabSeed(title, searchType = "movies") {
         );
         results = results.filter((item) => {
           const url2 = item.url.toLowerCase();
-          const decoded = decodeURIComponent(url2);
           if (searchType === "series")
-            return decoded.includes("مسلسل") || decoded.includes("برنامج") || url2.includes("/series/");
-          return decoded.includes("فيلم") || (!decoded.includes("مسلسل") && !decoded.includes("برنامج") && !url2.includes("/series/"));
+            return url2.includes("/series/");
+          return !url2.includes("/series/");
         });
         return results;
       });
@@ -417,7 +389,7 @@ function chooseCandidate(candidates, wantedTitles, wantedYears) {
   if (!best) {
     return null;
   }
-  if (best.score < 0.40) {
+  if (best.score < 0.75) {
     console.log(
       "[ArabSeed] NO SAFE MATCH:",
       best.score.toFixed(3)
@@ -685,23 +657,6 @@ function getStreamsFromPage(pageUrl) {
       }
     );
     const watchHtml = watchResponse.text;
-
-    // === videoIframe fast-path (added by patch) ===
-    const _iframeMatch = watchHtml.match(/<iframe[^>]*id=["']videoIframe["'][^>]*src=["']([^"']+)["']/i);
-    if (_iframeMatch && _iframeMatch[1]) {
-      const _embedUrl = _iframeMatch[1];
-      console.log("[ArabSeed] videoIframe src:", _embedUrl);
-      return [{
-        name: "ArabSeed",
-        title: "ArabSeed",
-        quality: "auto",
-        url: _embedUrl,
-        type: "iframe",
-        referer: absoluteWatchUrl
-      }];
-    }
-    // === end fast-path ===
-
     const postId = extractPostId(
       watchHtml
     );
@@ -779,17 +734,15 @@ function getMovieStreams(tmdbId) {
       tmdbId,
       "movie"
     );
-    const _searchResults = yield Promise.all(
-      info.titles.map(function(t) {
-        const cached = _asdCacheGet(_ASD_CACHE.search, "mv:" + t);
-        if (cached) return Promise.resolve(cached);
-        return searchArabSeed(t).then(function(r) {
-          return _asdCacheSet(_ASD_CACHE.search, "mv:" + t, r);
-        });
-      })
-    );
     const candidates = [];
-    for (const r of _searchResults) candidates.push(...r);
+    for (const title of info.titles) {
+      const results = yield searchArabSeed(
+        title
+      );
+      candidates.push(
+        ...results
+      );
+    }
     const unique = [];
     for (const candidate of candidates) {
       if (!unique.some(
@@ -802,18 +755,13 @@ function getMovieStreams(tmdbId) {
       "[ArabSeed] Unique movie candidates:",
       unique.length
     );
-    const _toInspect = unique.slice(0, 15);
     const inspected = [];
-    for (let i = 0; i < _toInspect.length; i += 8) {
-      const batch = _toInspect.slice(i, i + 8);
-      const got = yield Promise.all(batch.map(function(c) {
-        const cached = _asdCacheGet(_ASD_CACHE.inspect, c.url);
-        if (cached) return Promise.resolve(cached);
-        return inspectCandidate(c).then(function(r) {
-          return _asdCacheSet(_ASD_CACHE.inspect, c.url, r);
-        });
-      }));
-      for (const r of got) inspected.push(r);
+    for (const candidate of unique.slice(0, 15)) {
+      inspected.push(
+        yield inspectCandidate(
+          candidate
+        )
+      );
     }
     const selected = chooseCandidate(
       inspected,
@@ -912,92 +860,22 @@ function getSeriesEpisodes(pageUrl) {
     return unique;
   });
 }
-async function fetchEpisodesViaAjax(episodePageUrl) {
-  const getText = async (url, opts) => {
-    if (typeof globalThis.fetch === "function") {
-      const r = await globalThis.fetch(url, opts);
-      return await r.text();
-    }
-    try {
-      const axios = require("axios");
-      const r = await axios(url, opts);
-      return typeof r.data === "string" ? r.data : "";
-    } catch (e) { return ""; }
-  };
-
-  let pageHtml = "";
-  try {
-    pageHtml = await getText(episodePageUrl);
-  } catch (e) { return []; }
-
-  const sm = pageHtml.match(/data-season=["'](\d+)["']/);
-  if (!sm) {
-    console.log("[ArabSeed] AJAX: no data-season on page");
-    return [];
-  }
-  const seasonId = sm[1];
-  console.log("[ArabSeed] AJAX: season=" + seasonId);
-
-  const ajaxUrl = "https://arabseed.rent/wp-admin/admin-ajax.php";
-  const all = [];
-  const seen = new Set();
-  const re = /href="(https:\/\/arabseed\.rent\/[^"]*%d8%a7%d9%84%d8%ad%d9%84%d9%82%d8%a9[^"]*)"/g;
-
-  const _pageHtmls = await Promise.all([1, 2, 3].map(function(p) {
-    return getText(ajaxUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Referer": episodePageUrl,
-        "X-Requested-With": "XMLHttpRequest"
-      },
-      body: "action=load_episodes&season=" + seasonId + "&page=" + p
-    }).catch(function() { return ""; });
-  }));
-  for (let i = 0; i < _pageHtmls.length; i++) {
-    const html = _pageHtmls[i];
-    const page = i + 1;
-    if (!html || html.length < 20) continue;
-    let added = 0;
-    let m;
-    re.lastIndex = 0;
-    while ((m = re.exec(html)) !== null) {
-      const url = m[1].replace(/\/watch\/?$/, "/");
-      if (seen.has(url)) continue;
-      seen.add(url);
-      let ep = null;
-      try {
-        const dec = decodeURIComponent(url);
-        const em = dec.match(/الحلق[ةه][-_]?(\d+)/);
-        if (em) ep = Number(em[1]);
-      } catch (e) {}
-      if (ep == null) continue;
-      all.push({ url, season: 1, episode: ep, name: "Episode " + ep });
-      added++;
-    }
-    console.log("[ArabSeed] AJAX page " + page + " added " + added);
-  }
-
-  return all;
-}
-
 function getTvStreams(tmdbId, season, episode) {
   return __async(this, null, function* () {
     const info = yield getTmdbInfo(
       tmdbId,
       "tv"
     );
-    const _searchResults = yield Promise.all(
-      info.titles.map(function(t) {
-        const cached = _asdCacheGet(_ASD_CACHE.search, "tv:" + t);
-        if (cached) return Promise.resolve(cached);
-        return searchArabSeed(t, "series").then(function(r) {
-          return _asdCacheSet(_ASD_CACHE.search, "tv:" + t, r);
-        });
-      })
-    );
     const candidates = [];
-    for (const r of _searchResults) candidates.push(...r);
+    for (const title of info.titles) {
+      const results = yield searchArabSeed(
+        title,
+        "series"
+      );
+      candidates.push(
+        ...results
+      );
+    }
     const unique = [];
     for (const candidate of candidates) {
       if (!unique.some(
@@ -1010,18 +888,13 @@ function getTvStreams(tmdbId, season, episode) {
       "[ArabSeed] Unique series candidates:",
       unique.length
     );
-    const _toInspect = unique.slice(0, 15);
     const inspected = [];
-    for (let i = 0; i < _toInspect.length; i += 8) {
-      const batch = _toInspect.slice(i, i + 8);
-      const got = yield Promise.all(batch.map(function(c) {
-        const cached = _asdCacheGet(_ASD_CACHE.inspect, c.url);
-        if (cached) return Promise.resolve(cached);
-        return inspectCandidate(c).then(function(r) {
-          return _asdCacheSet(_ASD_CACHE.inspect, c.url, r);
-        });
-      }));
-      for (const r of got) inspected.push(r);
+    for (const candidate of unique.slice(0, 15)) {
+      inspected.push(
+        yield inspectCandidate(
+          candidate
+        )
+      );
     }
     const selected = chooseCandidate(
       inspected,
@@ -1038,34 +911,11 @@ function getTvStreams(tmdbId, season, episode) {
       selected.pageTitle,
       selected.url
     );
-    const wantedSeason = Number(season) || 1;
-    const wantedEpisode = Number(episode) || 1;
-
-    // === Arabic episode-number fast-path (added by patch) ===
-    try {
-      const dec = decodeURIComponent(selected.url);
-      const m = dec.match(/الحلق[ةه][-_]?(\d+)/);
-      if (m && Number(m[1]) === wantedEpisode) {
-        console.log("[ArabSeed] Selected URL is target episode, using directly");
-        return yield getStreamsFromPage(selected.url);
-      }
-    } catch (e) {}
-
-    for (const cand of unique) {
-      try {
-        const dec = decodeURIComponent(cand.url);
-        const m = dec.match(/الحلق[ةه][-_]?(\d+)/);
-        if (m && Number(m[1]) === wantedEpisode) {
-          console.log("[ArabSeed] Direct episode candidate:", cand.url);
-          return yield getStreamsFromPage(cand.url);
-        }
-      } catch (e) {}
-    }
-    // === end fast-path ===
-
     const episodes = yield getSeriesEpisodes(
       selected.url
     );
+    const wantedSeason = Number(season) || 1;
+    const wantedEpisode = Number(episode) || 1;
     let selectedEpisode = episodes.find(
       (e) => e.season === wantedSeason && e.episode === wantedEpisode
     );
@@ -1074,28 +924,6 @@ function getTvStreams(tmdbId, season, episode) {
         (e) => e.episode === wantedEpisode
       );
     }
-
-    // === AJAX fallback (added by patch) ===
-    if (!selectedEpisode) {
-      let ajaxEpisodes = _asdCacheGet(_ASD_CACHE.episodes, selected.url);
-      if (!ajaxEpisodes) {
-        ajaxEpisodes = yield fetchEpisodesViaAjax(selected.url);
-        if (ajaxEpisodes && ajaxEpisodes.length) {
-          _asdCacheSet(_ASD_CACHE.episodes, selected.url, ajaxEpisodes);
-        }
-      }
-      if (ajaxEpisodes.length) {
-        selectedEpisode = ajaxEpisodes.find(
-          (e) => e.season === wantedSeason && e.episode === wantedEpisode
-        );
-        if (!selectedEpisode) {
-          selectedEpisode = ajaxEpisodes.find(
-            (e) => e.episode === wantedEpisode
-          );
-        }
-      }
-    }
-    // === end AJAX fallback ===
     if (!selectedEpisode) {
       throw new Error(
         `ArabSeed episode not found S${wantedSeason}E${wantedEpisode}`
@@ -1110,25 +938,6 @@ function getTvStreams(tmdbId, season, episode) {
     );
   });
 }
-// === SPEED PATCH v2: in-memory cache ===
-const _ASD_CACHE = {
-  search: new Map(),
-  inspect: new Map(),
-  episodes: new Map(),
-  ttl: 10 * 60 * 1000
-};
-function _asdCacheGet(map, key) {
-  const e = map.get(key);
-  if (!e) return undefined;
-  if (Date.now() - e.t > _ASD_CACHE.ttl) { map.delete(key); return undefined; }
-  return e.v;
-}
-function _asdCacheSet(map, key, v) {
-  map.set(key, { t: Date.now(), v });
-  return v;
-}
-// === end cache ===
-
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     console.log(
