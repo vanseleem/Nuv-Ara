@@ -537,6 +537,25 @@ function getTvStreams(tmdbId, season, episode) {
          * chooseResult() is asynchronous.
          * It MUST be awaited with .then().
          */
+        // === AKWAM-TV-V4 season filter ===
+        var _wantS = Number(season) || 1;
+        var _AR = {'الاول':1,'الاولي':1,'الأول':1,'الأولى':1,
+                   'الثاني':2,'الثانية':2,'الثالث':3,'الثالثة':3,
+                   'الرابع':4,'الرابعة':4,'الخامس':5,'الخامسة':5,
+                   'السادس':6,'السادسة':6,'السابع':7,'السابعة':7,
+                   'الثامن':8,'الثامنة':8,'التاسع':9,'التاسعة':9,
+                   'العاشر':10,'العاشرة':10};
+        function _sOf(t){var m=String(t||'').match(/الموسم\s+(\S+)/);if(!m)return null;if(_AR[m[1]]!=null)return _AR[m[1]];var n=Number(m[1]);return isNaN(n)?null:n;}
+        var _explicit = results.filter(function(r){return _sOf(r.title) === _wantS;});
+        var _noS = results.filter(function(r){return _sOf(r.title) === null;});
+        if (_explicit.length > 0) {
+          // === AKWAM-TV-V5: exclusive match when exact season found ===
+          results = _explicit;
+          console.log("[Akwam] TV season filter: S" + _wantS + " -> " + results.length + " EXACT candidates");
+          // === end ===
+        }
+        // === end season filter ===
+
         return chooseResult(results, meta);
 
       }).then(function(result) {
@@ -647,6 +666,18 @@ function getTvStreams(tmdbId, season, episode) {
                 );
               });
             }
+
+            // === AKWAM-TV-V4 extra fallback (sort by episode ID) ===
+            if (!selected.length && episodeLinks.length >= wanted) {
+              var _byId = episodeLinks.map(function(u) {
+                var mm = u.match(/\/episode\/([0-9]+)/);
+                return { url: u, id: mm ? Number(mm[1]) : 0 };
+              });
+              _byId.sort(function(a, b) { return a.id - b.id; });
+              selected = [_byId[wanted - 1].url];
+              console.log("[Akwam] TV ep fallback (sorted by ID): E" + wanted + " = " + selected[0]);
+            }
+            // === end fallback ===
 
             if (!selected.length) {
               console.log(
