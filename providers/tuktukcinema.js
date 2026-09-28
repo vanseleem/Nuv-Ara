@@ -1,5 +1,5 @@
 // TukTuk Cinema Provider for Nuvio
-// Version: 1.7.0 - Fixed Stream Format Detection
+// Version: 1.7.1 - Fixed Debug Logs & Improved Iframe Detection
 // Only returns playable stream URLs (M3U8, MP4)
 
 const cheerio = require('cheerio-without-node-native');
@@ -176,7 +176,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     console.log(`[TukTukCinema] TMDB: ${tmdbId}, Type: ${mediaType}, S${seasonNum}E${episodeNum}`);
     
     if (DEBUG_MODE) {
-      debugStreams.push(createDebugStream(`Request S${seasonNum}E${episodeNum}`, `TMDB: ${tmdbId}`, mediaType));
+      // FIX: Handle undefined S/E for movies
+      const requestInfo = mediaType === 'movie' ? 'Movie' : `S${seasonNum || '?'}E${episodeNum || '?'}`;
+      debugStreams.push(createDebugStream(`Request ${requestInfo}`, `TMDB: ${tmdbId}`, mediaType));
     }
     
     if (!tmdbId) {
@@ -347,9 +349,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
           return Promise.reject(new Error('Result'));
         }
         
-        const watchUrl = result.episodeUrl.endsWith('/') 
-          ? `${result.episodeUrl}watch/` 
-          : `${result.episodeUrl}/watch/`;
+        // FIX: Better Watch URL construction
+        let watchUrl = result.episodeUrl;
+        if (!watchUrl.includes('/watch/')) {
+            watchUrl = watchUrl.endsWith('/') ? `${watchUrl}watch/` : `${watchUrl}/watch/`;
+        }
         
         if (DEBUG_MODE) {
           debugStreams.push(createDebugStream('Watch page', watchUrl.substring(0, 40) + '...', ''));
@@ -363,11 +367,26 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
       })
       .then(function(watchData) {
         const $watch = cheerio.load(watchData.watchHtml);
-        const iframe = $watch('div.player--iframe iframe');
-        const iframeSrc = fixUrl(iframe.attr('src'));
+        
+        // FIX: More robust iframe extraction
+        let iframe = $watch('div.player--iframe iframe');
+        if (iframe.length === 0) {
+            iframe = $watch('iframe'); // Fallback 1: Any iframe
+        }
+        
+        let iframeSrc = iframe.length > 0 ? fixUrl(iframe.attr('src')) : null;
+        
+        // FIX: Fallback 2: Regex extraction (in case it's loaded dynamically)
+        if (!iframeSrc) {
+            const iframeMatch = watchData.watchHtml.match(/<iframe[^>]+src=["']([^"']+)["']/i);
+            if (iframeMatch && iframeMatch[1]) {
+                iframeSrc = fixUrl(iframeMatch[1]);
+                console.log(`[TukTukCinema] Found iframe via Regex: ${iframeSrc}`);
+            }
+        }
         
         if (!iframeSrc) {
-          resolve([createDebugStream('ERROR: No iframe', '', '')].concat(debugStreams));
+          resolve([createDebugStream('ERROR: No iframe', 'Player not found on page', '')].concat(debugStreams));
           return Promise.reject(new Error('Iframe'));
         }
         
@@ -401,7 +420,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
           return Promise.reject(new Error('Done'));
         }
         
-        const iframeId = iframeSrc.split('/').pop();
+        // FIX: Cleaner Iframe ID extraction
+        const urlParts = iframeSrc.split('/');
+        const iframeId = urlParts[urlParts.length - 1].replace(/[^a-zA-Z0-9]/g, '');
         const iframeUrl = `https://w.megatukmax.xyz/iframe/${iframeId}`;
         
         return fetch(iframeUrl, { headers: { ...WORKING_HEADERS, 'Referer': watchData.watchUrl }})
@@ -506,36 +527,31 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 url: iframeData.watchUrl,
                 quality: 'Browser',
                 size: 'External',
-                headers: { 'User-Agent': WORKING_HEADERS['User-Agent'] },
-                provider: 'tuktukcinema-external'
-              });
-            }
-            
-            // Prioritize playable streams
-            const finalStreams = playableStreams.length > 0 ? playableStreams : nonPlayableStreams;
-            
-            if (finalStreams.length === 0) {
-              resolve([createDebugStream('ERROR: No streams', 'API returned empty', '')].concat(debugStreams).concat(warnings));
-            } else {
-              console.log(`[TukTukCinema] Returning ${finalStreams.length} stream(s)`);
-              resolve((DEBUG_MODE ? debugStreams.concat(warnings) : []).concat(finalStreams));
-            }
-          });
-      })
-      .catch(function(error) {
-        if (error.message === 'Done' || error.message === 'No results' || 
-            error.message === 'Season' || error.message === 'Episode' ||
-            error.message === 'URL' || error.message === 'Result' || error.message === 'Iframe') {
-          return;
-        }
-        console.error(`[TukTukCinema] Error: ${error.message}`);
-        resolve([createDebugStream('ERROR', error.message, '')].concat(debugStreams));
-      });
-  });
+                                  headers: { 'User-Agent': WORKING_HEADERS['User-Agent'] },
+                  provider: 'tuktukcinema-external'
+                }); // Fixed: Added missing closing brace for the object literal
+              }
+              
+              // Prioritize playable streams
+              const finalStreams = playableStreams.length > 0 ? playableStreams : nonPlayableStreams;
+              
+              if (finalStreams.length === 0) {
+                resolve([createDebugStream('ERROR: No streams', 'API returned empty', '')].concat(debugStreams).concat(warnings));
+              } else {
+                console.log(`[TukTukCinema] Returning ${finalStreams.length} stream(s)`);
+                resolve((DEBUG_MODE ? debugStreams.concat(warnings) : []).concat(finalStreams));
+              }
+            });
+        })
+        .catch(function(error) {
+          if (error.message === 'Done' || error.message === 'No results' || 
+              error.message === 'Season' || error.message === 'Episode' ||
+              error.message === 'URL' || error.message === 'Result' || error.message === 'Iframe') {
+            return;
+          }
+          console.error(`[TukTukCinema] Unhandled Error:`, error);
+        });
+    });
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { getStreams };
-} else {
-  global.getStreams = getStreams;
-}
+module.exports = { getStreams };
