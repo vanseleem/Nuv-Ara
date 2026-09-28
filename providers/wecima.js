@@ -1,179 +1,306 @@
+var BASE = "https://wecima.ac";
+var UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36";
+var TMDB_API_KEY = "83d364331c40bfbe29858aeed82f45cc";
 
-const BASE_URL = "https://wecima.ac";
-const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+// Cloudflare cookie cache
+var _cfCookie = null;
 
-// --- Cloudflare Cookie Handling ---
-let cfClearanceCookie = null;
-
-function updateCfCookie(response) {
-  const setCookieHeader = response.headers.get('set-cookie');
-  if (setCookieHeader) {
-    const match = setCookieHeader.match(/cf_clearance=([^;]+)/);
-    if (match) {
-      cfClearanceCookie = `cf_clearance=${match[1]}`;
-      console.log(`[WeCima] Updated cf_clearance cookie.`);
-    }
-  }
-}
-
-async function fetchWithCf(url, options = {}) {
-  const headers = new Headers(options.headers || {});
-  headers.set('User-Agent', USER_AGENT);
-  headers.set('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8');
-  headers.set('Accept-Language', 'ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7');
-  headers.set('Referer', `${BASE_URL}/`);
-
-  if (cfClearanceCookie) {
-    headers.set('Cookie', cfClearanceCookie);
-  }
-
-  console.log(`[WeCima] Fetching: ${url}`);
-  const response = await fetch(url, { ...options, headers, redirect: 'follow' });
-  updateCfCookie(response); // Try to update the cookie on every request
-  return response;
-}
-// ------------------------------------
-
-async function getTmdbTitles(tmdbId, mediaType) {
-  const type = mediaType === 'tv' ? 'tv' : 'movie';
-  const apiKey = "83d364331c40bfbe29858aeed82f45cc"; // Provided in your Akwam provider
-  const url = `https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=${apiKey}&language=ar`;
-  const response = await fetch(url);
-  const data = await response.json();
-  const title = type === 'movie' ? data.title : data.name;
-  return [title, data.original_title || data.original_name].filter(Boolean);
-}
-
-function parseSearchJson(jsonText) {
-  try {
-    const data = JSON.parse(jsonText);
-    if (!data.results) return [];
-
-    return data.results.map(item => {
-      const isTv = item.istv !== 0;
-      const urlPath = isTv ? 'series' : 'watch';
-      return {
-        title: item.title,
-        url: `${BASE_URL}/${urlPath}/${encodeURIComponent(item.slug)}`,
-        type: isTv ? 'tv' : 'movie',
-        year: item.year
-      };
-    });
-  } catch (e) {
-    console.error('[WeCima] Failed to parse search JSON:', e);
-    return [];
-  }
-}
-
-async function searchWeCima(query) {
-  const searchUrl = `${BASE_URL}/search`;
-  const body = new URLSearchParams({ q: query }).toString();
-
-  const response = await fetchWithCf(searchUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body
+function encodeUrl(u) {
+  return String(u).replace(/[^\x00-\x7F]/g, function(c) {
+    return encodeURIComponent(c);
   });
-
-  if (!response.ok) {
-    console.error(`[WeCima] Search failed with status: ${response.status}`);
-    return [];
-  }
-
-  const text = await response.text();
-  return parseSearchJson(text);
 }
 
-async function getStreamsFromEpisodePage(url) {
-  const response = await fetchWithCf(url);
-  const html = await response.text();
+function fetchText(url, referer) {
+  url = encodeUrl(url);
+  var headers = {
+    "User-Agent": UA,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7"
+  };
+  if (referer) headers["Referer"] = encodeUrl(referer);
+  if (_cfCookie) headers["Cookie"] = _cfCookie;
 
-  // This logic is adapted from the loadLinks function in your Kotlin plugin.
-  // It looks for a data-url attribute containing a base64 encoded link.
-  const $ = require('cheerio').load(html);
-  const streams = [];
-
-  $('ul.WatchServersList li btn').each((i, el) => {
-    const encodedUrl = $(el).attr('data-url');
-    if (encodedUrl) {
-      // Basic Base64 decoding
-      try {
-        const decodedUrl = Buffer.from(encodedUrl, 'base64').toString('utf-8');
-        if (decodedUrl.startsWith('http')) {
-          streams.push({
-            name: 'WeCima',
-            title: `Server ${i + 1}`,
-            url: decodedUrl,
-            quality: 'Unknown',
-            headers: { 'Referer': BASE_URL } // Important for playback
-          });
-        }
-      } catch (e) {
-        console.error(`[WeCima] Failed to decode Base64 URL: ${encodedUrl}`);
+  return fetch(url, { headers: headers, redirect: "follow" }).then(function(r) {
+    // capture cf_clearance if present
+    try {
+      var sc = r.headers.get("set-cookie");
+      if (sc) {
+        var m = sc.match(/cf_clearance=([^;]+)/);
+        if (m) _cfCookie = "cf_clearance=" + m[1];
       }
-    }
+    } catch (e) {}
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.text();
   });
+}
+
+function fetchPost(url, body, referer) {
+  var headers = {
+    "User-Agent": UA,
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+    "X-Requested-With": "XMLHttpRequest",
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+  };
+  if (referer) headers["Referer"] = encodeUrl(referer);
+  if (_cfCookie) headers["Cookie"] = _cfCookie;
+
+  return fetch(encodeUrl(url), {
+    method: "POST",
+    headers: headers,
+    body: body,
+    redirect: "follow"
+  }).then(function(r) {
+    try {
+      var sc = r.headers.get("set-cookie");
+      if (sc) {
+        var m = sc.match(/cf_clearance=([^;]+)/);
+        if (m) _cfCookie = "cf_clearance=" + m[1];
+      }
+    } catch (e) {}
+    return r.text();
+  });
+}
+
+function decodeHtml(str) {
+  return String(str || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function getTmdbTitles(tmdbId, mediaType) {
+  var type = mediaType === "tv" ? "tv" : "movie";
+  var langs = ["ar", "en"];
+  var titles = [];
+
+  return langs.reduce(function(chain, lang) {
+    return chain.then(function() {
+      var apiUrl = "https://api.themoviedb.org/3/" + type + "/" +
+        encodeURIComponent(tmdbId) +
+        "?api_key=" + TMDB_API_KEY + "&language=" + lang;
+      return fetch(apiUrl)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var t = type === "movie"
+            ? (data.title || data.original_title)
+            : (data.name || data.original_name);
+          if (t && titles.indexOf(t) === -1) titles.push(t);
+        })
+        .catch(function() {});
+    });
+  }, Promise.resolve()).then(function() {
+    console.log("[WeCima] TMDB titles:", titles.join(" | "));
+    return titles;
+  });
+}
+
+function searchWeCima(query) {
+  var url = BASE + "/search";
+  var body = "q=" + encodeURIComponent(query);
+  console.log("[WeCima] Search POST:", url, "q=" + query);
+
+  return fetchPost(url, body, BASE + "/").then(function(text) {
+    var results = [];
+    try {
+      var data = JSON.parse(text);
+      if (data && data.results) {
+        data.results.forEach(function(item) {
+          if (item.istv === 2) return; // skip
+          var isTv = item.istv !== 0;
+          var prefix = isTv ? "/series/" : "/watch/";
+          var slug = item.slug || "";
+          if (!slug) return;
+          var itemUrl = slug.startsWith("http")
+            ? slug
+            : BASE + prefix + encodeURIComponent(slug);
+          results.push({
+            title: item.title || "",
+            url: itemUrl,
+            isTv: isTv,
+            year: item.year
+          });
+        });
+      }
+    } catch (e) {
+      console.log("[WeCima] search parse error:", e.message);
+    }
+    console.log("[WeCima] Search results:", results.length);
+    return results;
+  });
+}
+
+function base64Decode(str) {
+  // Try global atob first (available in most JS runtimes)
+  try {
+    if (typeof atob === "function") return atob(str);
+  } catch (e) {}
+  // Fallback
+  try {
+    if (typeof Buffer !== "undefined") {
+      return Buffer.from(str, "base64").toString("utf-8");
+    }
+  } catch (e) {}
+  return null;
+}
+
+function decodeWecimaUrl(encoded) {
+  try {
+    if (!encoded) return null;
+    var cleaned = String(encoded).replace(/\+/g, "").trim();
+    var final = cleaned.indexOf("aHR0c") === 0 ? cleaned : "aHR0c" + cleaned;
+    var decoded = base64Decode(final);
+    if (!decoded) return null;
+    return decoded;
+  } catch (e) {
+    return null;
+  }
+}
+
+function extractStreamsFromEpisodePage(html) {
+  var streams = [];
+  var seen = new Set();
+
+  // Look for data-url on server buttons
+  var re = /data-url\s*=\s*["']([^"']+)["']/gi;
+  var m;
+  var idx = 0;
+
+  while ((m = re.exec(html)) !== null) {
+    var decoded = decodeWecimaUrl(m[1]);
+    if (decoded && decoded.indexOf("http") === 0 && !seen.has(decoded)) {
+      seen.add(decoded);
+      idx++;
+      streams.push({
+        name: "WeCima",
+        title: "WeCima Server " + idx,
+        url: decoded,
+        quality: "Unknown",
+        referer: BASE + "/"
+      });
+    }
+  }
+
+  // Also try data-href (download buttons)
+  var re2 = /data-href\s*=\s*["']([^"']+)["']/gi;
+  while ((m = re2.exec(html)) !== null) {
+    var dec2 = decodeWecimaUrl(m[1]);
+    if (dec2 && dec2.indexOf("http") === 0 && !seen.has(dec2)) {
+      seen.add(dec2);
+      idx++;
+      streams.push({
+        name: "WeCima",
+        title: "WeCima Download " + idx,
+        url: dec2,
+        quality: "Unknown",
+        referer: BASE + "/"
+      });
+    }
+  }
 
   return streams;
 }
 
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-  return new Promise((resolve, reject) => {
-    console.log(`[WeCima] getStreams called for: ${tmdbId}, ${mediaType}, S${seasonNum}E${episodeNum}`);
+function getMovieStreams(tmdbId) {
+  return getTmdbTitles(tmdbId, "movie").then(function(titles) {
+    if (!titles.length) return [];
+    return searchWeCima(titles[0]).then(function(results) {
+      if (!results.length) {
+        console.log("[WeCima] no movie results");
+        return [];
+      }
+      // Take first result
+      var best = results[0];
+      console.log("[WeCima] selected:", best.title, best.url);
 
-    getTmdbTitles(tmdbId, mediaType)
-      .then(titles => {
-        if (titles.length === 0) {
-          console.error('[WeCima] No titles found on TMDB.');
-          return resolve([]);
-        }
-        // Search using the first available title
-        return searchWeCima(titles[0]);
-      })
-      .then(searchResults => {
-        if (searchResults.length === 0) {
-          console.error('[WeCima] No search results on WeCima.');
-          return resolve([]);
-        }
+      // If it's already a /watch/ URL, extract streams
+      if (best.url.indexOf("/watch/") !== -1) {
+        return fetchText(best.url, BASE + "/").then(function(html) {
+          return extractStreamsFromEpisodePage(html);
+        });
+      }
 
-        // Find the best matching result
-        const bestMatch = searchResults[0]; // A simple match, can be improved
-        console.log(`[WeCima] Best match found: ${bestMatch.title} (${bestMatch.url})`);
-
-        if (mediaType === 'movie') {
-          // For movies, we need to find a "watch" page. The search result might be the movie page.
-          // We'll need to fetch the page and look for the watch link.
-          return fetchWithCf(bestMatch.url).then(res => res.text()).then(html => {
-            const $ = require('cheerio').load(html);
-            const watchLink = $('a[href*="/watch/"]').attr('href');
-            if (watchLink) {
-              return getStreamsFromEpisodePage(`${BASE_URL}${watchLink}`);
-            }
-            console.error('[WeCima] No watch link found on movie page.');
-            return [];
-          });
-        } else {
-          // For TV series, we need to find the specific episode.
-          // This involves more complex logic to parse the season/episode structure.
-          // For a first version, we'll just return the series page URL as a stream placeholder.
-          console.log('[WeCima] TV series logic not fully implemented. Returning series page URL.');
-          return [{
-            name: 'WeCima',
-            title: 'Series Page (No episode selection)',
-            url: bestMatch.url,
-            quality: 'N/A',
-            headers: { 'Referer': BASE_URL }
-          }];
+      // Otherwise, fetch the page and look for a watch link
+      return fetchText(best.url, BASE + "/").then(function(html) {
+        var m = html.match(/href=["']([^"']*\/watch\/[^"']+)["']/i);
+        if (!m) {
+          console.log("[WeCima] no watch link on movie page");
+          return [];
         }
-      })
-      .then(streams => {
-        resolve(streams);
-      })
-      .catch(error => {
-        console.error(`[WeCima] Error in getStreams: ${error.message}`);
-        resolve([]); // Resolve with empty array on error
+        var watchUrl = m[1].indexOf("http") === 0 ? m[1] : BASE + m[1];
+        return fetchText(watchUrl, best.url).then(function(whtml) {
+          return extractStreamsFromEpisodePage(whtml);
+        });
       });
+    });
   });
 }
 
-module.exports = { getStreams };
+function getTvStreams(tmdbId, season, episode) {
+  return getTmdbTitles(tmdbId, "tv").then(function(titles) {
+    if (!titles.length) return [];
+    return searchWeCima(titles[0]).then(function(results) {
+      if (!results.length) {
+        console.log("[WeCima] no TV results");
+        return [];
+      }
+      // Pick first TV result
+      var best = results.find(function(r) { return r.isTv; }) || results[0];
+      console.log("[WeCima] selected TV:", best.title, best.url);
+
+      // Fetch series page, find episode link matching season/episode
+      return fetchText(best.url, BASE + "/").then(function(html) {
+        // Look for links with "الحلقة" or "Episode"
+        var epLinks = [];
+        var re = /href=["']([^"']*\/watch\/[^"']+)["']/gi;
+        var m;
+        while ((m = re.exec(html)) !== null) {
+          var u = decodeHtml(m[1]);
+          if (epLinks.indexOf(u) === -1) epLinks.push(u);
+        }
+
+        if (!epLinks.length) {
+          console.log("[WeCima] no episode links found");
+          return [];
+        }
+
+        // Try to match episode number
+        var wanted = Number(episode) || 1;
+        var selected = epLinks.filter(function(u) {
+          var dec = "";
+          try { dec = decodeURIComponent(u); } catch (e) { dec = u; }
+          var mm = dec.match(/الحلق[ةه][^0-9]*([0-9]+)/i) ||
+                   u.match(/-([0-9]+)(?:[/?#]|$)/);
+          return mm && Number(mm[1]) === wanted;
+        });
+
+        var target = selected.length ? selected[0] : epLinks[Math.min(wanted - 1, epLinks.length - 1)];
+        if (!target) return [];
+
+        var watchUrl = target.indexOf("http") === 0 ? target : BASE + target;
+        console.log("[WeCima] episode page:", watchUrl);
+
+        return fetchText(watchUrl, best.url).then(function(ehtml) {
+          return extractStreamsFromEpisodePage(ehtml);
+        });
+      });
+    });
+  });
+}
+
+function getStreams(tmdbId, mediaType, season, episode) {
+  console.log("[WeCima] getStreams:", tmdbId, mediaType, season, episode);
+  var fn = mediaType === "tv"
+    ? getTvStreams(tmdbId, season, episode)
+    : getMovieStreams(tmdbId);
+  return fn.catch(function(err) {
+    console.log("[WeCima] error:", err.message);
+    return [];
+  });
+}
+
+module.exports = { getStreams: getStreams };
